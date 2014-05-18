@@ -3,10 +3,10 @@
 
   Adapters are used to convert Ring handlers into running web servers."
   (:require [ring.util.servlet :as servlet])
-  (:import (org.eclipse.jetty.server Request Server)
+  (:import (org.eclipse.jetty.server HttpConfiguration
+                                     HttpConnectionFactory Request
+                                     Server ServerConnector)
            (org.eclipse.jetty.server.handler AbstractHandler)
-           (org.eclipse.jetty.server.nio SelectChannelConnector)
-           (org.eclipse.jetty.server.ssl SslSelectChannelConnector)
            (org.eclipse.jetty.util.ssl SslContextFactory)
            (org.eclipse.jetty.util.thread QueuedThreadPool)))
 
@@ -43,39 +43,38 @@
     context))
 
 (defn- ssl-connector
-  "Creates a SslSelectChannelConnector instance."
-  [options]
-  (doto (SslSelectChannelConnector. (ssl-context-factory options))
+  "Creates a ServerConnector instance for ssl connections."
+  [options server]
+  (doto (ServerConnector. server (ssl-context-factory options))
     (.setPort (options :ssl-port 443))
     (.setHost (options :host))
-    (.setMaxIdleTime (options :max-idle-time 200000))))
+    (.setIdleTimeout (options :max-idle-time 200000))))
 
 (defn- connector
   "Creates a SelectChannelConnector instance."
-  [options]
-  (doto (SelectChannelConnector.)
+  [options server]
+  (doto (ServerConnector. server)
     (.setPort (options :port 80))
     (.setHost (options :host))
-    (.setMaxIdleTime (options :max-idle-time 200000))))
+    (.setIdleTimeout (options :max-idle-time 200000))))
 
 (defn- create-server
   "Construct a Jetty Server instance."
   [options]
   (let [^QueuedThreadPool p (QueuedThreadPool.)
-        ^Server server (Server.)]
+        ^Server server (Server. p)]
     (doto p
       (.setMinThreads ^Integer (options :min-threads 8))
       (.setMaxThreads ^Integer (options :max-threads 50)))
-    (when-let [max-queued (:max-queued options)]
-      (.setMaxQueued p max-queued))
+    ;; TODO: http://git.eclipse.org/c/jetty/org.eclipse.jetty.project.git/commit/jetty-util/src/main/java/org/eclipse/jetty/util/thread/QueuedThreadPool.java?id=8e98148350f215e2ec58d0b936ab08ce22229d6a
+    #_(when-let [max-queued (:max-queued options)]
+        (.setMaxQueued p max-queued))
     (when (:daemon? options false)
       (.setDaemon p true))
     (doto server
-      (.setSendDateHeader true)
-      (.setThreadPool p)
-      (.addConnector (connector options)))
+      (.addConnector (connector options server)))
     (when (or (options :ssl?) (options :ssl-port))
-      (.addConnector server (ssl-connector options)))
+      (.addConnector server (ssl-connector options server)))
     server))
 
 (defn ^Server run-jetty
